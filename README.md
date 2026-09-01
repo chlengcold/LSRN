@@ -1,12 +1,12 @@
-# Latent Space Model for Rating Networks (LSRN)
+# Latent Space Rated Network (LSRN)
 
-This repository provides the source code for the Latent Space Model for Rating Networks (LSRN) developed in:
+This repository provides the source code for the Latent Space Rated Network (LSRN) developed in:
 
 > Leng, C. H., & Böckenholt, U. (in press). Familiarity and liking in classroom networks: A multilayer analysis of rated peer relations. *Psychometrika*.
 
 ## Overview
 
-The code in this repository implements the Latent Space Model for Rating Networks (LSRN) proposed by Leng and Böckenholt (in press). The model provides a framework for analyzing multilayer relational rating data by jointly representing individual response tendencies and latent relational structures across multiple types of peer relations.
+The code in this repository implements the Latent Space Rated Network (LSRN) proposed by Leng and Böckenholt (in press). The model provides a framework for analyzing multilayer relational rating data by jointly representing individual response tendencies and latent relational structures across multiple types of peer relations.
 
 ## Getting Started
 
