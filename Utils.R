@@ -32,6 +32,24 @@ Clus = function(X,  Max){
   return(Output)
 }
 
+transitivity = function(X,  Max){
+  N = ncol(X)
+  O = matrix(1, N, N)
+  diag(O) = 0
+  C_total = matrix(1, Max, N)
+  for(i in 0:Max){
+    A = 1 * (X >= i)
+    AA = (A + t(A))
+    AA[is.na(AA)] = 0
+    Ci = diag( (AA%*%AA%*%AA) / (2*(AA%*%O%*%AA)) )
+    C_total[i,] = Ci
+  }
+  C_total[is.na(C_total)]=0
+  Output = apply(C_total, 2, mean, na.rm=T) 
+  
+  return(Output)
+}
+
 # Multiplexity (similarity)
 multiPlex = function(X,idx){
   N = dim(X)[1]
@@ -52,7 +70,7 @@ s_multiPlex = function(X,idx){
   N = dim(X)[1]
   sum_wi = 0
   for(i in 1:N){
-    s = apply(X[i,,idx], 2, sum)
+    s = apply(X[i,,idx], 2, sum, na.rm = T)
     wi = min(s, na.rm = T)
     wi = ifelse(is.infinite(wi), 0, wi)
     sum_wi = sum_wi + wi
@@ -66,7 +84,7 @@ r_multiPlex = function(X,idx){
   N = dim(X)[1]
   sum_wj = 0
   for(j in 1:N){
-    r = apply(X[,j,idx], 2, sum)
+    r = apply(X[,j,idx], 2, sum, na.rm = T)
     wj = min(r, na.rm = T)
     wj = ifelse(is.infinite(wj), 0, wj)
     sum_wj = sum_wj + wj
@@ -95,8 +113,8 @@ sr_multiReci = function(X,idx){
   N = dim(X)[1]
   sum_wij = 0
   for(i in 1:N){
-    s = sum(X[i,,idx[1]])
-    r = sum(X[,i,idx[2]])
+    s = sum(X[i,,idx[1]], na.rm = T)
+    r = sum(X[,i,idx[2]], na.rm = T)
     wij = min(s, r, na.rm = T)
     sum_wij = sum_wij + wij
   }
@@ -109,8 +127,8 @@ rs_multiReci = function(X,idx){
   N = dim(X)[1]
   sum_wij = 0
   for(j in 1:N){
-    r = sum(X[,j,idx[1]])
-    s = sum(X[j,,idx[2]])
+    r = sum(X[,j,idx[1]], na.rm = T)
+    s = sum(X[j,,idx[2]], na.rm = T)
     wij = min(s, r, na.rm = T)
     sum_wij = sum_wij + wij
   }
@@ -122,26 +140,30 @@ rs_multiReci = function(X,idx){
 ##### Procrustes Matching #####
 ProcrustesMatching = function(chain_output, nchain=3){
   
-  post_samples = NULL
-  for(c in 1:nchain){
-    post_samples = rbind(post_samples, as.matrix(chain_output[[c]][[1]]$samples))
-  }
-  n_var = colnames(post_samples)
-  sel_Xi= grep('xi', n_var)
+  N = Args[['N']]
+  V = Args[['V']]
+  L = Args[['L']]
+  K = Args[['K']]
+  P = Args[['P']]
   
   len = dim(post_samples)[1]
   
-  est_logL = NULL
-  for(c in 1:nchain){
-    tmp_logL = chain_output[[c]][[1]]$samples[,grep('logL_raw',n_var)] %>% array(dim=c(len/nchain, N,N,K,P))
-    est_logL = c(est_logL, rowSums(tmp_logL,dims=1))
-  }
+  post_Xi = post_samples[,grep('xi', n_var_est)] %>% array(.,dim=c(len,N,V,L))
+  post_Theta = post_samples[,grep('theta', n_var_est)]%>% array(.,dim=c(len,N,2*L)) 
+  post_Tau = post_samples[,grep('tau', n_var_est)] %>% array(.,dim=c(len,K-1,L))  
+  post_Beta = post_samples[,grep('beta', n_var_est)] %>% array(.,dim=c(len,P)) 
+  post_Delta = post_samples[,grep('delta', n_var_est)] %>% array(.,dim=c(len,P)) 
+  post_Lambda = post_samples[,grep('lambda', n_var_est)] %>% array(.,dim=c(len,2,P))  
   
+  est_logL = numeric(len)
+  for(k in 1:len){
+    est_logL[k] = logL(y, post_Theta[k,,1:L], 
+                       post_Theta[k,,(L+1):(2*L)], post_Beta[k,], post_Tau[k,,], post_Lambda[k,,], post_Delta[k,], post_Xi[k,,,])
+  }
   ref_point = which.max(est_logL) 
-  post_Xi = post_samples[,sel_Xi] %>% array(.,dim=c(len,N,V,L))
   
   Xi_0 = post_Xi[ref_point,,,]
-
+  
   post_Xi_arr = array(0, dim=c(N, V, L, len))
   
   for(i in 1:len){
@@ -156,8 +178,42 @@ ProcrustesMatching = function(chain_output, nchain=3){
   return(est_Xi)
 }
 
+ProcrustesMatching_rep = function(post_samples, nchain=3){
+  
+  n_var = colnames(post_samples)
+  sel_Xi= grep('xi', n_var)
+  
+  len = dim(post_samples)[1]
+  
+  len_chain = len / nchain
+  
+  est_logL = NULL
+  for(c in 1:nchain){
+    tmp_logL = as.matrix(post_samples[(1:len_chain)+len_chain*(c-1),]) %>% array(dim=c(len_chain, N,N,K,P))
+    est_logL = c(est_logL, rowSums(tmp_logL,dims=1))
+  }
+  
+  ref_point = which.max(est_logL) 
+  post_Xi = post_samples[,sel_Xi] %>% as.matrix() %>% array(.,dim=c(len,N,V,L))
+  
+  Xi_0 = post_Xi[ref_point,,,]
+  
+  post_Xi_arr = array(0, dim=c(N, V, L, len))
+  
+  for(i in 1:len){
+    for(l in 1:L){
+      proc = MCMCpack::procrustes(post_Xi[i,,,l], Xi_0[,,l], translation = T, dilation = T)
+      post_Xi_arr[,,l,i] = proc$X.new # c(N, v, P, len)
+    }
+  }
+  
+  return(post_Xi_arr)
+}
+
 ##### Fit #####
 logL = function(y, thetaS, thetaR, beta, tauj, g, w, xi){
+  P = Args[['P']]
+  
   y[is.na(y)] = 0
   logL_outpput = 0
   cats = nrow(tauj)
@@ -186,49 +242,37 @@ logL = function(y, thetaS, thetaR, beta, tauj, g, w, xi){
   return(logL_outpput)
 }
 
-logL_1L = function(y, thetaS, thetaR, beta, tauj, g, w, xi){
-  y[is.na(y)] = 0
-  logL_outpput = 0
-  cats = length(tauj)
-  N = length(thetaS)
-  for(p in 1:P){
-    for(i in 1: N){
-      for(j in (1:N)[-i]){
-        # Retrivel from knowledge
-        ## Probability of y
-        logit = thetaS[i] + thetaR[j] - beta[p] - 
-          g[((w[p]>0.5)+1) ,p] * sqrt(sum((xi[i,]- xi[j,])^2)) - 
-          tauj
-        
-        py = exp(cumsum(c(0, logit)))
-        py = py / sum(py)
-        
-        # Reponse of person n
-        for(k in 1:(cats+1)){
-          log_ijk = (y[i,j,p]==k)*log(py[k])
-          logL_outpput = logL_outpput + log_ijk
-        }
-      }
-    }
-  }
-  
-  return(logL_outpput)
-}
-
 # DIC
 DIC_LSRN = function(y){
   # ppDIC
   DIC = LogL = NULL
   {
-    N = nrow(y)
+    N = Args[['N']]
+    V = Args[['V']]
+    L = Args[['L']]
+    K = Args[['K']]
+    P = Args[['P']]
   }
   
-  logl = logL(y, est_Theta[,1:L], est_Theta[,(L+1):(2*L)],  est_Beta, est_Tau, est_Lambda, est_Omega, est_Xi)
+  logl = logL(y, est_Theta[,1:L], est_Theta[,(L+1):(2*L)],  est_Beta, est_Tau, est_Lambda, est_Delta, est_Xi)
   
   len = dim(post_samples)[1]
   n_var = colnames(post_samples)
-  ppdic = post_samples[,grep('logL', n_var)] %>% as.matrix %>% apply(.,1,sum) %>% sum()
-  ppdic = ppdic/len
+  
+  post_Xi = post_samples[,grep('xi', n_var_est)] %>% array(.,dim=c(len,N,V,L))
+  post_Theta = post_samples[,grep('theta', n_var_est)]%>% array(.,dim=c(len,N,2*L)) 
+  post_Tau = post_samples[,grep('tau', n_var_est)] %>% array(.,dim=c(len,K-1,L))  
+  post_Beta = post_samples[,grep('beta', n_var_est)] %>% array(.,dim=c(len,P)) 
+  post_Delta = post_samples[,grep('delta', n_var_est)] %>% array(.,dim=c(len,P)) 
+  post_Lambda = post_samples[,grep('lambda', n_var_est)] %>% array(.,dim=c(len,2,P))  
+  
+  est_logL = numeric(len)
+  for(k in 1:len){
+    est_logL[k] = logL(y, post_Theta[k,,1:L], 
+                       post_Theta[k,,(L+1):(2*L)], post_Beta[k,], post_Tau[k,,], post_Lambda[k,,], post_Delta[k,], post_Xi[k,,,])
+  }
+  
+  ppdic = est_logL %>% mean()
   
   pdic = 2*(logl-ppdic)
   DIC = c(DIC, -2*logl+2*pdic)
@@ -279,9 +323,9 @@ Fit_s = function(y, thetaS, thetaR, beta, tauj, lambda, omega, xiS, xiR, Mod='Di
 }
 
 # Receiver fit
-Fit_r = function(y, thetaS, thetaR, beta, tauj, lambda, omega, xiS, xiR, Mod='Dist'){
+Fit_r = function(y, thetaS, thetaR, beta, tauj, lambda, delta, xiS, xiR, Mod='Dist'){
   
-  ProbR = function(thetaS, thetaR, beta, tauj, lambda, omega, xiS, xiR, Mod='Dist'){
+  ProbR = function(thetaS, thetaR, beta, tauj, lambda, delta, xiS, xiR, Mod='Dist'){
     cats = nrow(tauj)
     N = nrow(thetaS)
     Prob = array(0,c(N,P,cats+1))
@@ -290,7 +334,7 @@ Fit_r = function(y, thetaS, thetaR, beta, tauj, lambda, omega, xiS, xiR, Mod='Di
         if(Mod=='Dist'){
           Dist_ij = -sqrt(sum((xiS[i,,item_dim[p]] - xiR[,item_dim[p]])^2))
         }
-        logit = thetaS[i,item_dim[p]] + thetaR[item_dim[p]] + lambda[(omega[p]>.5)+1,p] * Dist_ij + beta[p] - tauj[,item_dim[p]]
+        logit = thetaS[i,item_dim[p]] + thetaR[item_dim[p]] + lambda[(delta[p]>.5)+1,p] * Dist_ij + beta[p] - tauj[,item_dim[p]]
 
         py = exp(cumsum(c(0, logit)))
         py = py / sum(py)
@@ -305,7 +349,7 @@ Fit_r = function(y, thetaS, thetaR, beta, tauj, lambda, omega, xiS, xiR, Mod='Di
   K = nrow(tauj)+1
   N = nrow(thetaS) 
   
-  Prob_R = ProbR(thetaS, thetaR, beta, tauj, lambda, omega, xiS, xiR, Mod='Dist') 
+  Prob_R = ProbR(thetaS, thetaR, beta, tauj, lambda, delta, xiS, xiR, Mod='Dist') 
   m_y = rep(0:(K-1), each=(N)*P) %>% array(dim=c(N,P,K))
   E_R = rowSums(Prob_R * m_y, dims=2)
   m_E_R = array(E_R, dim=c(N,P,K))
@@ -318,7 +362,7 @@ Fit_r = function(y, thetaS, thetaR, beta, tauj, lambda, omega, xiS, xiR, Mod='Di
   return(list(R_Fit, R_Fit_each))
 }
 
-data_gen_fit = function(thetaS, thetaR, beta, tauj, lambda, omega, xiS, xiR, SR='s', Mod='Dist'){
+data_gen_fit = function(thetaS, thetaR, beta, tauj, lambda, delta, xiS, xiR, SR='s', Mod='Dist'){
   if(SR=='s'){
     cats = nrow(tauj)
     N = nrow(thetaR)
@@ -329,7 +373,7 @@ data_gen_fit = function(thetaS, thetaR, beta, tauj, lambda, omega, xiS, xiR, SR=
           if(Mod=='Dist'){
             Dist_ij = -sqrt(sum((xiS[,item_dim[p]] - xiR[j,,item_dim[p]])^2))
           }
-          logit = thetaS[item_dim[p]] + thetaR[j,item_dim[p]] + lambda[(omega[p]>.5)+1,p] * Dist_ij + beta[p] - tauj[,item_dim[p]]
+          logit = thetaS[item_dim[p]] + thetaR[j,item_dim[p]] + lambda[(delta[p]>.5)+1,p] * Dist_ij + beta[p] - tauj[,item_dim[p]]
    
           py = exp(cumsum(c(0, logit)))
           py = py / sum(py)
@@ -350,7 +394,7 @@ data_gen_fit = function(thetaS, thetaR, beta, tauj, lambda, omega, xiS, xiR, SR=
           if(Mod=='Dist'){
             Dist_ij = -sqrt(sum((xiS[i,,item_dim[p]] - xiR[,item_dim[p]])^2))
           }
-          logit = thetaS[i,item_dim[p]] + thetaR[item_dim[p]] + lambda[(omega[p]>.5)+1,p] * Dist_ij +  beta[p] - tauj[,item_dim[p]]
+          logit = thetaS[i,item_dim[p]] + thetaR[item_dim[p]] + lambda[(delta[p]>.5)+1,p] * Dist_ij +  beta[p] - tauj[,item_dim[p]]
 
           py = exp(cumsum(c(0, logit)))
           py = py / sum(py)
@@ -367,9 +411,9 @@ data_gen_fit = function(thetaS, thetaR, beta, tauj, lambda, omega, xiS, xiR, SR=
 }
 
 # Network fit
-Fit_net = function(y, thetaS, thetaR, beta, tauj, lambda, omega, xi,Mod='Dist'){
+Fit_net = function(y, thetaS, thetaR, beta, tauj, lambda, delta, xi,Mod='Dist'){
   
-  Prob = function(thetaS, thetaR, beta, tauj, lambda, omega, xi, Mod='Dist'){
+  Prob = function(thetaS, thetaR, beta, tauj, lambda, delta, xi, Mod='Dist'){
     cats = length(tauj)
     N = nrow(thetaS)
     Prob_Net = array(0,c(N,N,cats+1))
@@ -378,7 +422,7 @@ Fit_net = function(y, thetaS, thetaR, beta, tauj, lambda, omega, xi,Mod='Dist'){
         if(Mod=='Dist'){
           Dist_ij = -sqrt(sum((xi[i,,item_dim[p]] - xi[j,,item_dim[p]])^2))
         }
-        logit = thetaS[i,item_dim[p]] + thetaR[j,item_dim[p]] + lambda[(omega>.5)+1] * Dist_ij - beta - tauj
+        logit = thetaS[i,item_dim[p]] + thetaR[j,item_dim[p]] + lambda[(delta>.5)+1] * Dist_ij - beta - tauj
 
         py = exp(cumsum(c(0, logit)))
         py = py / sum(py)
@@ -393,7 +437,7 @@ Fit_net = function(y, thetaS, thetaR, beta, tauj, lambda, omega, xi,Mod='Dist'){
   K = length(tauj)+1
   N = nrow(thetaS) 
   
-  Prob_Net = Prob(thetaS, thetaR, beta, tauj, lambda, omega, xi, Mod='Dist') 
+  Prob_Net = Prob(thetaS, thetaR, beta, tauj, lambda, delta, xi, Mod='Dist') 
   m_y = rep(0:(K-1), each=N*N) %>% array(dim=c(N,N,K))
   E = rowSums(Prob_Net * m_y, dims=2)
   m_E = array(E, dim=c(N,N,K))
@@ -405,7 +449,7 @@ Fit_net = function(y, thetaS, thetaR, beta, tauj, lambda, omega, xi,Mod='Dist'){
   return(Net_Fit)
 }
 
-data_gen_fit_p = function(thetaS, thetaR, beta, tauj, lambda, omega, xi, Mod='Dist'){
+data_gen_fit_p = function(thetaS, thetaR, beta, tauj, lambda, delta, xi, Mod='Dist'){
   cats = length(tauj)
   N = nrow(thetaR)
   r = array(0,c(N,N))
@@ -414,7 +458,7 @@ data_gen_fit_p = function(thetaS, thetaR, beta, tauj, lambda, omega, xi, Mod='Di
       if(Mod=='Dist'){
         Dist_ij = -sqrt(sum((xi[i,,item_dim[p]] - xi[j,,item_dim[p]])^2))
       }
-      logit = thetaS[i,item_dim[p]] + thetaR[j,item_dim[p]] + lambda[(omega>.5)+1] * Dist_ij - beta - tauj
+      logit = thetaS[i,item_dim[p]] + thetaR[j,item_dim[p]] + lambda[(delta>.5)+1] * Dist_ij - beta - tauj
       py = exp(cumsum(c(0, logit)))
       py = py / sum(py)
       
